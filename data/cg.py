@@ -1,5 +1,4 @@
-import numpy as np
+import torch
+data = torch.load("./600_128x128")
 
-a = np.arange(0, 10)
-
-print(a)
+print(data)

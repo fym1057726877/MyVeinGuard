@@ -1,12 +1,14 @@
 import os
 import torch
 import torch.nn as nn
+from torch.utils.data import DataLoader
 from cleverhans.torch.attacks.fast_gradient_method import fast_gradient_method
 from cleverhans.torch.attacks.projected_gradient_descent import projected_gradient_descent
 from cleverhans.torch.attacks.hop_skip_jump_attack import hop_skip_jump_attack
 import os
 import numpy as np
-
+from utils import get_project_path
+from data.mydataset import Vein600_128x128
 from Classifier.trainClassifier import getDefinedClsModel
 
 
@@ -27,15 +29,15 @@ def advAttack(classifier, x, label, attack_type, eps):
                                      initial_num_evals=1, max_num_evals=50,
                                      num_iterations=30, batch_size=batchsize, verbose=False)
     else:
-        raise RuntimeError("The attack type {} is invalid!".format(attack_type))
+        raise RuntimeError(f"The attack type {attack_type} is invalid!")
     return x_adv
 
 
 def generateAdvImage(classifier, path, attack_type="fgsm"):
     print("Generating Adversarial Examples ...")
-    print("eps = {} attack_type = {}".format(eps, attack_type))
+    print(f"eps = {eps} attack_type = {attack_type}")
     # 加载数据
-    data = torch.load("数据路径")
+    data = DataLoader(Vein600_128x128(), batch_size=60, shuffle=True)
     train_acc, adv_acc, train_n = 0, 0, 0
     normal_data, adv_data, label_data = None, None, None
     loss_fun = nn.CrossEntropyLoss()
@@ -58,8 +60,8 @@ def generateAdvImage(classifier, path, attack_type="fgsm"):
             adv_data = torch.cat((adv_data, x_adv))
             label_data = torch.cat((label_data, label))
 
-    print("Accuracy(normal) {:.6f}, Accuracy(FGSM) {:.6f}".format(torch.true_divide(train_acc, train_n),
-                                                                  torch.true_divide(adv_acc, train_n)))
+    print(f"Accuracy(normal) {torch.true_divide(train_acc, train_n):.6f}, "
+          f"Accuracy({attack_type}) {torch.true_divide(adv_acc, train_n):.6f}")
 
     torch.save({"normal": normal_data, "adv": adv_data, "label": label_data}, path)
 
@@ -127,9 +129,6 @@ if __name__ == "__main__":
     model.load_state_dict(torch.load("the path of classifier"))
     generateAdvImage(
         classifier=model,
-        path=os.path.join(
-            "data",
-            "AdvData.ckp"
-        ),
+        path=os.path.join(get_project_path(), "data", "adv_imgs"),
         attack_type=attack_type
     )
