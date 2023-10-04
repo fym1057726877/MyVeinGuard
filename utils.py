@@ -1,6 +1,5 @@
 import torch
 import os
-from matplotlib import pyplot as plt
 
 
 def get_project_path(project_name='MyVeinGuard'):

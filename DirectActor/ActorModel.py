@@ -1,6 +1,9 @@
 import torch.nn as nn
 import torchvision
 import torch
+from data.mydataset import Vein600_128x128
+from torchvision.transforms import transforms
+from torch.utils.data import DataLoader
 
 
 class Resnet34Actor(nn.Module):
@@ -20,3 +23,16 @@ class Resnet34Actor(nn.Module):
         z = z * self.action_bound
         return z
 
+
+def test_actormodel():
+    transform = transforms.ToTensor()
+    dataset = Vein600_128x128(transform=transform)
+    dataloder = DataLoader(dataset, batch_size=100, shuffle=True)
+    print(len(dataloder))
+    x, y = next(iter(dataloder))
+
+    print(x.shape, y.shape)
+
+    model = Resnet34Actor()
+    out = model(x)
+    print(out.shape)

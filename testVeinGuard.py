@@ -70,6 +70,7 @@ class DirectTrainActorReconstruct:
             rec_y = classifier(rec_img)
             rec_acc += accuracy(rec_y, label)
             num += label.size(0)
+
         print("[Num: %d/%d] [NormalAcc:   %f] [AdvAcc:   %f] [RecAcc:   %f]" % (
             num, total_num,
             torch.true_divide(normal_acc, num).item(),

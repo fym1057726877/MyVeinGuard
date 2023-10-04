@@ -3,11 +3,12 @@ import torch
 import torch.nn as nn
 from torch import optim
 from tqdm import tqdm
+from utils import get_project_path
+from data.mydataset import get_Vein600_128x128_Dataloader
+from Classifier.model import (FVRASNet_wo_Maxpooling, FineTuneClassifier, LightweightDeepConvNN,
+                              MSMDGANetCnn_wo_MaxPool, TargetedModelB, Tifs2019CnnWithoutMaxPool)
 
-from torch.utils.data import DataLoader
-
-from Classifier.model import FVRASNet_wo_Maxpooling, FineTuneClassifier, LightweightDeepConvNN, MSMDGANetCnn_wo_MaxPool, TargetedModelB, Tifs2019CnnWithoutMaxPool
-
+os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 
 def getDefinedClsModel(dataset_name, model_name, device) -> nn.Module:
     if dataset_name == "Handvein":
@@ -26,10 +27,7 @@ def getDefinedClsModel(dataset_name, model_name, device) -> nn.Module:
         else:
             model = Tifs2019CnnWithoutMaxPool(out_channel)
     elif model_name == "ModelB":
-        if dataset_name == "Fingervein1" or "Fingervein2":
-            model = TargetedModelB(out_channel, fingervein1=True)
-        else:
-            model = TargetedModelB(out_channel)
+        model = TargetedModelB(out_channel)
     elif model_name == "PV-CNN":
         if dataset_name == "Fingervein1" or "Fingervein2":
             model = MSMDGANetCnn_wo_MaxPool(out_channel, fingervein1=True)
@@ -51,20 +49,19 @@ def getDefinedClsModel(dataset_name, model_name, device) -> nn.Module:
     return model
 
 
-
 # lr = 1e-5
-lr = 5e-5
+# lr = 5e-5
 # lr = 1e-4
-batchsize = 48
-total_epochs = 1000
-device = "cuda"
+# batchsize = 48
+# total_epochs = 1000
+# device = "cuda"
 
 
 # dataset_name = "Handvein"
 # dataset_name = "Handvein3"
-dataset_name = "Fingervein2"
+# dataset_name = "Fingervein2"
 
-model_name = "Resnet18"
+# model_name = "Resnet18"
 # model_name = "GoogleNet"
 # model_name = "ModelB"
 # model_name = "MSMDGANetCnn_wo_MaxPool"   # PV-CNN
@@ -73,84 +70,87 @@ model_name = "Resnet18"
 # model_name = "LightweightDeepConvNN"
 
 
-
 class TrainClassifier:
     def __init__(
             self,
-            model,
+            total_epochs=100,
+            lr=5e-5,
+            device="cuda",
+            dataset_name="Fingervein2",
+            model_name="ModelB",
+            batchsize=30
     ):
         super(TrainClassifier, self).__init__()
         # customize these object according to the path of your own data
-        self.train_loader = DataLoader()
-        self.val_loader = DataLoader()
-        self.test_loader = DataLoader()
-        self.classifier = model
-        self.ckp_path = os.path.join(
-            "Classifier", "ckp"
-        )
+        self.device = device
+        self.train_loader, self.test_loader = get_Vein600_128x128_Dataloader(batch_size=batchsize, shuffle=True)
+        self.classifier = getDefinedClsModel(dataset_name, model_name, device)
+        self.save_path = os.path.join(get_project_path(), "pretrained", f"{model_name}.pth")
+        self.classifier.load_state_dict(torch.load(self.save_path))
+
         # loss function
         self.loss_fun = nn.CrossEntropyLoss()
-        self.classifier.to(device)
+        self.total_epochs = total_epochs
+        self.lr = lr
+        self.batch_size = batchsize
+
+        self.optimer = optim.AdamW(self.classifier.parameters(), lr=self.lr, weight_decay=0.05)
+        self.scheduler = optim.lr_scheduler.StepLR(self.optimer, step_size=10, gamma=0.99)
 
     def train(self):
-        optimer = optim.AdamW(self.classifier.parameters(), lr=self.lr, weight_decay=0.05)
-        scheduler = optim.lr_scheduler.StepLR(optimer, step_size=10, gamma=0.99)
         for e in range(self.total_epochs):
             correct_num = 0
             train_num = 0
+            epoch_loss = 0
             self.classifier.train()
-            iter_object = self.train_loader
             # start train
-            for index, (img, label) in enumerate(iter_object):
+            batch_count = len(self.train_loader)
+            for index, (img, label) in tqdm(enumerate(self.train_loader), desc=f"train {e}/{self.total_epochs}", total=batch_count):
+                self.optimer.zero_grad()
                 img, label = img.to(self.device), label.to(self.device)
                 pred = self.classifier(img)
                 cls_loss = self.loss_fun(pred, label.long())
-                optimer.zero_grad()
-                cls_loss.backward()
-                optimer.step()
-                correct_num += pred.max(dim=1, keep_dim=True)[1].eq(label.view_as(pred)).sum()
-                train_num += label.size(0)
-            if optimer.state_dict()['param_groups'][0]['lr'] > self.lr / 1e2:
-                scheduler.step()
-            train_acc = torch.true_divide(correct_num, train_num)
-            val_acc = self.eval(eval_type="val")
-            print(
-                f"[Epoch {e}/{self.total_epochs}] \n"
-                f"[Train_acc:   {train_acc.item()}]"
-                f"[Val_acc:   {val_acc.item()}]"
-            )
-            torch.save(self.classifier.state_dict(), self.ckp_path)
-        test_acc = self.eval(eval_type="test")
-        print(f"[Test_acc:   {test_acc.item()}\n")
 
-    def eval(self, eval_type="val"):
+                cls_loss.backward()
+                self.optimer.step()
+
+                correct_num += (pred.max(dim=1)[1] == label).sum()
+                train_num += label.size(0)
+                epoch_loss += cls_loss
+
+            if self.optimer.state_dict()['param_groups'][0]['lr'] > self.lr / 1e2:
+                self.scheduler.step()
+
+            train_acc = torch.true_divide(correct_num, train_num)
+            test_acc = self.eval()
+            epoch_loss /= batch_count
+            print(
+                f"[Epoch {e}/{self.total_epochs}   Loss:{epoch_loss:.6f}   "
+                f"Train_acc: {train_acc.item():.6f}   test_acc: {test_acc.item():.6f}]\n"
+            )
+            torch.save(self.classifier.state_dict(), self.save_path)
+
+    def eval(self):
         correct_num, eval_num = 0, 0
         self.classifier.eval()
-        if eval_type == "test":
-            dataloader = self.test_loader
-        elif eval_type == "val":
-            dataloader = self.val_loader
-        else:
-            raise RuntimeError("eval_type: {} is not valid".format(eval_type))
-        iter_object = dataloader
-        for index, (x, label) in enumerate(iter_object):
+        for index, (x, label) in tqdm(enumerate(self.test_loader), desc="test step", total=len(self.test_loader)):
             x, label = x.to(self.device), label.to(self.device)
             pred = self.classifier(x)
-            correct_num += pred.max(dim=1, keep_dim=True)[1].eq(label.view_as(pred)).sum()
+            correct_num += (pred.max(dim=1)[1] == label).sum()
             eval_num += label.size(0)
         return torch.true_divide(correct_num, eval_num)
 
 
-def trainCls():
+def trainCls(dataset_name, model_name, device, epochs):
     # seed = 1  # the seed for random function
-    model = getDefinedClsModel(
+    train_Classifier = TrainClassifier(
         dataset_name=dataset_name,
         model_name=model_name,
-        device=device
+        device=device,
+        total_epochs=epochs
     )
-    train_Classifier = TrainClassifier(model)
     train_Classifier.train()
 
 
 if __name__ == "__main__":
-    trainCls()
+    trainCls(dataset_name="Handvein3", model_name="ModelB", device="cuda", epochs=5)

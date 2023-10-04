@@ -1,14 +1,13 @@
 import os
 import torch
+import numpy as np
 import torch.nn as nn
 from torch.utils.data import DataLoader
 from cleverhans.torch.attacks.fast_gradient_method import fast_gradient_method
 from cleverhans.torch.attacks.projected_gradient_descent import projected_gradient_descent
 from cleverhans.torch.attacks.hop_skip_jump_attack import hop_skip_jump_attack
-import os
-import numpy as np
 from utils import get_project_path
-from data.mydataset import Vein600_128x128
+from data.mydataset import get_Vein600_128x128_Dataloader
 from Classifier.trainClassifier import getDefinedClsModel
 
 
@@ -37,11 +36,10 @@ def generateAdvImage(classifier, path, attack_type="fgsm"):
     print("Generating Adversarial Examples ...")
     print(f"eps = {eps} attack_type = {attack_type}")
     # 加载数据
-    data = DataLoader(Vein600_128x128(), batch_size=60, shuffle=True)
+    _, dataloader = get_Vein600_128x128_Dataloader(batch_size=64, shuffle=False)
     train_acc, adv_acc, train_n = 0, 0, 0
     normal_data, adv_data, label_data = None, None, None
-    loss_fun = nn.CrossEntropyLoss()
-    for index, (x, label) in enumerate(data):
+    for index, (x, label) in enumerate(dataloader):
         x, label = x.to(device), label.to(device)
         pred = classifier(x)
         train_acc += pred.max(dim=1, keep_dim=True)[1].eq(label.view_as(pred)).sum()
