@@ -1,7 +1,6 @@
 import torch
 from Classifier.trainClassifier import getDefinedClsModel
 from DirectActor.ActorModel import Resnet34Actor
-from TransGAN.TransGanModel import SwinTransGenerator
 
 
 # dataset_name = "Handvein"

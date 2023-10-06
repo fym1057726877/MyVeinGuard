@@ -126,7 +126,7 @@ class TrainClassifier:
             epoch_loss /= batch_count
             print(
                 f"[Epoch {e}/{self.total_epochs}   Loss:{epoch_loss:.6f}   "
-                f"Train_acc: {train_acc.item():.6f}   test_acc: {test_acc.item():.6f}]\n"
+                f"Train_acc: {train_acc.item():.6f}   Test_acc: {test_acc.item():.6f}]\n"
             )
             torch.save(self.classifier.state_dict(), self.save_path)
 

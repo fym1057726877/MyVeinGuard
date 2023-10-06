@@ -36,3 +36,6 @@ def test_actormodel():
     model = Resnet34Actor()
     out = model(x)
     print(out.shape)
+
+if __name__ == '__main__':
+    test_actormodel()
