@@ -10,6 +10,7 @@ from Classifier.model import (FVRASNet_wo_Maxpooling, FineTuneClassifier, Lightw
 
 os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 
+
 def getDefinedClsModel(dataset_name, model_name, device) -> nn.Module:
     if dataset_name == "Handvein":
         out_channel = 500
@@ -21,7 +22,7 @@ def getDefinedClsModel(dataset_name, model_name, device) -> nn.Module:
         raise RuntimeError(f"dataset_name:{dataset_name} is not valid!")
 
     # define the model
-    if model_name == "FV-CNN":   # FV-CNN
+    if model_name == "FV-CNN":  # FV-CNN
         if dataset_name == "Fingervein2":
             model = Tifs2019CnnWithoutMaxPool(out_channel, fingervein1=True)
         else:
@@ -33,12 +34,12 @@ def getDefinedClsModel(dataset_name, model_name, device) -> nn.Module:
             model = MSMDGANetCnn_wo_MaxPool(out_channel, fingervein1=True)
         else:
             model = MSMDGANetCnn_wo_MaxPool(out_channel)
-    elif model_name == "FVRASNet_wo_Maxpooling":   # FVRAS-Net
+    elif model_name == "FVRASNet_wo_Maxpooling":  # FVRAS-Net
         if dataset_name == "Fingervein1" or "Fingervein2":
             model = FVRASNet_wo_Maxpooling(out_channel, fingervein1=True)
         else:
             model = FVRASNet_wo_Maxpooling(out_channel)
-    elif model_name == "LightweightDeepConvNN":   # Lightweight_CNN
+    elif model_name == "LightweightDeepConvNN":  # Lightweight_CNN
         if dataset_name == "Fingervein1" or "Fingervein2":
             model = LightweightDeepConvNN(out_channel, fingervein1=True)
         else:
@@ -86,7 +87,7 @@ class TrainClassifier:
         self.train_loader, self.test_loader = get_Vein600_128x128_Dataloader(batch_size=batchsize, shuffle=True)
         self.classifier = getDefinedClsModel(dataset_name, model_name, device)
         self.save_path = os.path.join(get_project_path(), "pretrained", f"{model_name}.pth")
-        self.classifier.load_state_dict(torch.load(self.save_path))
+        # self.classifier.load_state_dict(torch.load(self.save_path))
 
         # loss function
         self.loss_fun = nn.CrossEntropyLoss()
@@ -105,7 +106,8 @@ class TrainClassifier:
             self.classifier.train()
             # start train
             batch_count = len(self.train_loader)
-            for index, (img, label) in tqdm(enumerate(self.train_loader), desc=f"train {e}/{self.total_epochs}", total=batch_count):
+            for index, (img, label) in tqdm(enumerate(self.train_loader), desc=f"train {e}/{self.total_epochs}",
+                                            total=batch_count):
                 self.optimer.zero_grad()
                 img, label = img.to(self.device), label.to(self.device)
                 pred = self.classifier(img)
@@ -153,4 +155,4 @@ def trainCls(dataset_name, model_name, device, epochs):
 
 
 if __name__ == "__main__":
-    trainCls(dataset_name="Handvein3", model_name="ModelB", device="cuda", epochs=5)
+    trainCls(dataset_name="Handvein3", model_name="ModelB", device="cuda", epochs=10)

@@ -4,6 +4,7 @@ from torchvision import transforms
 from torch.utils.data import Dataset, DataLoader, Subset
 from utils import get_project_path
 
+
 class Vein600_128x128(Dataset):
     def __init__(self, path_dir=None, transform=None):
         super().__init__()
@@ -73,6 +74,7 @@ def get_Vein600_128x128_Dataloader(batch_size=1, shuffle=False, transform=None):
     testloader = DataLoader(test_dataset, batch_size=test_batch_size, shuffle=test_shuffle)
 
     return trainloader, testloader
+
 
 if __name__ == '__main__':
     get_Vein600_128x128_Dataloader(batch_size=50)

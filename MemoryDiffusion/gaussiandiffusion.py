@@ -16,8 +16,6 @@ from nn import (
 )
 
 
-__all__ = ["GaussianDiffusion", "UNetModel"]
-
 def get_beta(betas_schedule="linear", num_diffusion_timesteps=1000):
     assert 100 <= num_diffusion_timesteps <= 1000
     if betas_schedule == "linear":
@@ -37,6 +35,7 @@ class ModelMeanType(enum.Enum):
 
     START_X = enum.auto()  # the model predicts x_0
     EPSILON = enum.auto()  # the model predicts epsilon
+
 
 class GaussianDiffusion:
     def __init__(
@@ -188,7 +187,7 @@ class GaussianDiffusion:
 
         model_mean, _, _ = self.q_posterior_mean_variance(
             x_start=pred_xstart, x_t=x_t, t=t
-        )   # 由x0得到，xt得到xt-1分布的均值和方差
+        )  # 由x0得到，xt得到xt-1分布的均值和方差
 
         return {
             "mean": model_mean,
@@ -349,7 +348,7 @@ class GaussianDiffusion:
         mean_pred = (
                 out["pred_xstart"] * th.sqrt(alpha_bar_next)
                 + th.sqrt(1 - alpha_bar_next - sigma ** 2) * eps
-        )   # predicted mean
+        )  # predicted mean
         nonzero_mask = (
             (t != 0).float().view(-1, *([1] * (len(x_t.shape) - 1)))
         )  # no noise when t == 0
@@ -445,9 +444,14 @@ class GaussianDiffusion:
             noise = th.randn_like(x_start)
         x_t = self.q_sample(x_start, t, noise=noise)
         model_output = model(x_t, t)
-        target = noise
+        if self.mean_type == ModelMeanType.EPSILON:
+            target = noise
+        elif self.mean_type == ModelMeanType.START_X:
+            target = x_start
+        else:
+            raise NotImplementedError("mean_type is not support")
         assert model_output.shape == target.shape == x_start.shape
-        loss = F.mse_loss(noise, model_output)
+        loss = F.mse_loss(target, model_output)
         return loss
 
     def get_rand_t(self, batch_size, device):
@@ -471,7 +475,6 @@ def _extract_into_tensor(arr, t, broadcast_shape):
     while len(res.shape) < len(broadcast_shape):
         res = res[..., None]
     return res.expand(broadcast_shape)
-
 
 
 # ============================Unet Model================================
@@ -976,8 +979,10 @@ def test_unet():
         attention_resolutions=[],
         num_res_blocks=2
     ).to(device)
-    x = th.randn((16, 1, 28, 28), device=device)
+    x = th.randn((16, 1, 128, 128), device=device)
     t = th.randint(0, 100, (16,), device=device)
     out = unet(x, t)
     print(out.shape)
 
+# if __name__ == '__main__':
+#     test_unet()

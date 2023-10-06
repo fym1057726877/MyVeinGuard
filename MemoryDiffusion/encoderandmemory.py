@@ -26,6 +26,7 @@ class EncoderAndMemory(nn.Module):
         self.memory = nn.Parameter(self.memory)
 
         self.Cosine_Similiarity = nn.CosineSimilarity(dim=2)
+        self.attn = MultiHeadedAttention(head_num=5, MEM_DIM=self.MEM_DIM, dropout=0.1)
         self.addressing = addressing
         if self.addressing == 'sparse':
             self.threshold = 1 / self.MEM_DIM
@@ -42,7 +43,7 @@ class EncoderAndMemory(nn.Module):
         ex_z = z.unsqueeze(1).repeat(1, self.MEM_DIM, 1)  # [b, mem_dim, fea]
 
         mem_logit = self.Cosine_Similiarity(ex_z, ex_mem)  # [b, mem_dim]
-        mem_weight = mem_logit.softmax(dim=1)  # [b, num_mem]
+        mem_weight = self.attn(mem_logit, mem_logit, mem_logit)  # [b, num_mem]
 
         # soft寻址和稀疏寻址
         z_hat = None
@@ -86,13 +87,13 @@ def clone(model, N):
 
 
 class MultiHeadedAttention(nn.Module):
-    def __init__(self, head_num, latent_dims, dropout=0.1):
+    def __init__(self, head_num, MEM_DIM, dropout=0.1):
         super(MultiHeadedAttention, self).__init__()
-        assert latent_dims % head_num == 0  # head_num必须得被embedding_dim整除
-        self.d_k = latent_dims // head_num
+        assert MEM_DIM % head_num == 0  # head_num必须得被embedding_dim整除
+        self.d_k = MEM_DIM // head_num
         self.head_num = head_num
         # q,k,v个需要一个，最后拼接还需要一个，总共四个线性层
-        self.linears = clone(nn.Linear(latent_dims, latent_dims), 4)
+        self.linears = clone(nn.Linear(MEM_DIM, MEM_DIM), 4)
         self.attn = None  # 最后得到的注意力张量
         self.dropout = nn.Dropout(p=dropout)
 
@@ -108,7 +109,6 @@ class MultiHeadedAttention(nn.Module):
 
         # 得到每个头的注意力矩阵
         x, self.attn = attention(query, key, value, mask=mask, dropout=self.dropout)
-        print(x.shape, self.attn.shape)
 
         # 把每个头的矩阵聚合起来,相当于得到输入步骤的逆操作
         # 当我们转置矩阵后矩阵的存储不是连续的，此后无法使用view进行重构，contiguous()函数能将矩阵的存储恢复为连续状态，
@@ -118,10 +118,10 @@ class MultiHeadedAttention(nn.Module):
         return x
 
 
-if __name__ == '__main__':
-    model = EncoderAndMemory()
-    x = th.randn((16, 1, 128, 128))
-    y = th.randn((16, 200))
-    att = MultiHeadedAttention(head_num=5, latent_dims=200)
-    out = att(y, y, y)
-    print(out.shape)
+# if __name__ == '__main__':
+#     model = EncoderAndMemory()
+#     x = th.randn((16, 1, 128, 128))
+#     y = th.randn((16, 200))
+#     att = MultiHeadedAttention(head_num=5, latent_dims=200)
+#     out = att(y, y, y)
+#     print(out.shape)
