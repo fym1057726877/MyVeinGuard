@@ -1,17 +1,17 @@
 import os
+import time
 import torch
+from tqdm import tqdm
 import numpy as np
-import torch.nn as nn
-from torch.utils.data import DataLoader
 from cleverhans.torch.attacks.fast_gradient_method import fast_gradient_method
 from cleverhans.torch.attacks.projected_gradient_descent import projected_gradient_descent
 from cleverhans.torch.attacks.hop_skip_jump_attack import hop_skip_jump_attack
 from utils import get_project_path
-from data.mydataset import get_Vein600_128x128_Dataloader
+from data.mydataset import testloader
 from Classifier.trainClassifier import getDefinedClsModel
 
 
-def advAttack(classifier, x, label, attack_type, eps):
+def advAttack(classifier, x, attack_type, eps):
     if attack_type == "RandFGSM":
         alpha = 0.005
         x = torch.clip(x + alpha * torch.sign(torch.randn(x.shape).to(device)), 0, 1)
@@ -20,34 +20,37 @@ def advAttack(classifier, x, label, attack_type, eps):
     elif attack_type == "FGSM":
         x_adv = fast_gradient_method(classifier, x, eps, np.inf)
     elif attack_type == "PGD":
-        x_adv = projected_gradient_descent(
-            classifier, x,
-            eps=eps, eps_iter=1 / 255, nb_iter=min(255 * eps + 4, 1.25 * (eps * 255)), norm=np.inf)
+        x_adv = projected_gradient_descent(classifier, x, eps=eps, eps_iter=1 / 255,
+                                           nb_iter=min(255 * eps + 4, 1.25 * (eps * 255)), norm=np.inf)
     elif attack_type == "HSJA":
-        x_adv = hop_skip_jump_attack(classifier, x, norm=2,
-                                     initial_num_evals=1, max_num_evals=50,
-                                     num_iterations=30, batch_size=batchsize, verbose=False)
+        x_adv = hop_skip_jump_attack(classifier, x, norm=2, initial_num_evals=1, max_num_evals=50,
+                                     num_iterations=30, batch_size=20, verbose=False)
     else:
         raise RuntimeError(f"The attack type {attack_type} is invalid!")
     return x_adv
 
 
-def generateAdvImage(classifier, path, attack_type="fgsm"):
-    print("Generating Adversarial Examples ...")
-    print(f"eps = {eps} attack_type = {attack_type}")
-    # 加载数据
-    _, dataloader = get_Vein600_128x128_Dataloader(batch_size=64, shuffle=False)
+def generateAdvImage(classifier, attack_dataloder, savepath=None, attack_type="fgsm", eps=0.03, progress=False):
+    print(f"-------------------------------------------------\n"
+          f"Generating Adversarial Examples ...\n"
+          f"eps = {eps} attack = {attack_type}")
+    time.sleep(1)
+    dataloader = attack_dataloder
     train_acc, adv_acc, train_n = 0, 0, 0
     normal_data, adv_data, label_data = None, None, None
-    for index, (x, label) in enumerate(dataloader):
+    if progress:
+        indice = tqdm(enumerate(dataloader), total=len(dataloader))
+    else:
+        indice = enumerate(dataloader)
+    for index, (x, label) in indice:
         x, label = x.to(device), label.to(device)
         pred = classifier(x)
-        train_acc += pred.max(dim=1, keep_dim=True)[1].eq(label.view_as(pred)).sum()
+        train_acc += (pred.max(dim=1)[1] == label).sum()
 
-        x_adv = advAttack(classifier=classifier, x=x, label=label, attack_type=attack_type, eps=eps)
+        x_adv = advAttack(classifier=classifier, x=x, attack_type=attack_type, eps=eps)
 
         y_adv = classifier(x_adv)
-        adv_acc += y_adv.max(dim=1, keep_dim=True)[1].eq(label.view_as(y_adv)).sum()
+        adv_acc += (y_adv.max(dim=1)[1] == label).sum()
         train_n += label.size(0)
 
         x, x_adv, label = x.data, x_adv.data, label.data
@@ -58,10 +61,14 @@ def generateAdvImage(classifier, path, attack_type="fgsm"):
             adv_data = torch.cat((adv_data, x_adv))
             label_data = torch.cat((label_data, label))
 
-    print(f"Accuracy(normal) {torch.true_divide(train_acc, train_n):.6f}, "
-          f"Accuracy({attack_type}) {torch.true_divide(adv_acc, train_n):.6f}")
+    print(f"Accuracy(normal) {torch.true_divide(train_acc, train_n):.6f}\n"
+          f"Accuracy({attack_type}) {torch.true_divide(adv_acc, train_n):.6f}\n"
+          f"-------------------------------------------------")
 
-    torch.save({"normal": normal_data, "adv": adv_data, "label": label_data}, path)
+    adv_data = {"normal": normal_data, "adv": adv_data, "label": label_data}
+    if savepath is not None:
+        torch.save(adv_data, savepath)
+    return adv_data
 
 
 if __name__ == "__main__":
@@ -70,10 +77,9 @@ if __name__ == "__main__":
     # dataset_name = "Handvein3"
     dataset_name = "Fingervein2"
 
-
-    model_name = "Resnet18"
+    # model_name = "Resnet18"
     # model_name = "GoogleNet"
-    # model_name = "ModelB"
+    model_name = "ModelB"
     # model_name = "MSMDGANetCnn_wo_MaxPool"
     # model_name = "Tifs2019Cnn_wo_MaxPool"
     # model_name = "FVRASNet_wo_Maxpooling"
@@ -86,8 +92,6 @@ if __name__ == "__main__":
 
     device = "cuda"
 
-    batchsize = 32
-
     if attack_type == "RandFGSM":
         eps = 0.015
     elif attack_type == "PGD":
@@ -98,35 +102,19 @@ if __name__ == "__main__":
         # eps = 0.01
         # eps = 0.015
         eps = 0.03
-    # eps = 0.015
-    # eps = 0.02
-    # eps = 0.021
-    # eps = 0.023
-    # eps = 0.0235
-    # eps = 0.024
-    # eps = 0.0245
-    # eps = 0.0246
-    # eps = 0.0247
-    # eps = 0.0248
-    # eps = 0.0249
-    # eps = 0.025
-    # eps = 0.03
-    # eps = 0.1   # 0.542
-    # eps = 0.15  # 0.0.224
-    # eps = 0.2   # 0.081
-
-    # eps = 0.3
-    # eps = 0.5
-
 
     model = getDefinedClsModel(
         dataset_name=dataset_name,
         model_name=model_name,
         device=device
     )
-    model.load_state_dict(torch.load("the path of classifier"))
+    model.load_state_dict(torch.load(os.path.join(get_project_path(), "pretrained", f"{model_name}.pth")))
     generateAdvImage(
         classifier=model,
-        path=os.path.join(get_project_path(), "data", "adv_imgs"),
-        attack_type=attack_type
+        attack_dataloder=testloader,
+        # savepath=os.path.join(get_project_path(), "data", "adv_imgs", "600_classes.pth"),
+        attack_type=attack_type,
+        eps=eps,
+        progress=True
     )
+

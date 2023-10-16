@@ -16,14 +16,47 @@ from nn import (
 )
 
 
+def space_timesteps(num_timesteps, section_counts):
+    if isinstance(section_counts, int):
+        for i in range(1, num_timesteps):
+            if len(range(0, num_timesteps, i)) == section_counts:
+                return list(range(0, num_timesteps, i))
+        raise ValueError(
+            f"cannot create exactly {num_timesteps} steps with an integer stride"
+        )
+    elif isinstance(section_counts, (list, tuple)):
+        size_per = num_timesteps // len(section_counts)
+        extra = num_timesteps % len(section_counts)
+        start_idx = 0
+        all_steps = []
+        for i, section_count in enumerate(section_counts):
+            size = size_per + (1 if i < extra else 0)
+            if size < section_count:
+                raise ValueError(
+                    f"cannot divide section of {size} steps into {section_count}"
+                )
+            if section_count <= 1:
+                frac_stride = 1
+            else:
+                frac_stride = (size - 1) / (section_count - 1)
+            cur_idx = 0.0
+            taken_steps = []
+            for _ in range(section_count):
+                taken_steps.append(start_idx + round(cur_idx))
+                cur_idx += frac_stride
+            all_steps += taken_steps
+            start_idx += size
+        return list(all_steps)
+    else:
+        raise NotImplementedError("the type of section_counts is not support")
+
+
 def get_beta(betas_schedule="linear", num_diffusion_timesteps=1000):
     assert 100 <= num_diffusion_timesteps <= 1000
     if betas_schedule == "linear":
         beta_start = 0.0001
         beta_end = 0.02
-        return np.linspace(
-            beta_start, beta_end, num_diffusion_timesteps, dtype=np.float64
-        )
+        return np.linspace(beta_start, beta_end, num_diffusion_timesteps, dtype=np.float64)
     else:
         raise NotImplementedError(f"unknown beta schedule: {betas_schedule}")
 
@@ -41,24 +74,25 @@ class GaussianDiffusion:
     def __init__(
             self,
             *,
-            betas_schedule="linera",
-            time_steps=1000,
-            ddim_step=100,
-            mean_type=ModelMeanType.START_X,
+            betas=None,
+            mean_type=ModelMeanType.EPSILON,
     ):
-        betas = get_beta(betas_schedule, time_steps)
+        if betas is None:
+            betas = get_beta("linear")
         assert (betas > 0).all() and (betas <= 1).all()
+
+        self.num_timesteps = int(betas.shape[0])
         self.betas = betas
 
         self.mean_type = mean_type
-        self.time_steps = time_steps
-        self.ddim_step = ddim_step
 
         alphas = 1.0 - betas
+        self.alphas = alphas
+
         self.alphas_cumprod = np.cumprod(alphas, axis=0)
         self.alphas_cumprod_prev = np.append(1.0, self.alphas_cumprod[:-1])
         self.alphas_cumprod_next = np.append(self.alphas_cumprod[1:], 0.0)
-        assert self.alphas_cumprod_prev.shape == (self.time_steps,)
+        assert self.alphas_cumprod_prev.shape == (self.num_timesteps,)
 
         # calculations for diffusion q(x_t | x_{t-1}) and others
         self.sqrt_alphas_cumprod = np.sqrt(self.alphas_cumprod)
@@ -179,7 +213,7 @@ class GaussianDiffusion:
         if self.mean_type == ModelMeanType.START_X:
             pred_xstart = model_output
         elif self.mean_type == ModelMeanType.EPSILON:
-            pred_xstart = self._predict_xstart_from_eps(x_t, t, model_output)
+            pred_xstart = self.predict_xstart_from_eps(x_t, t, model_output)
         else:
             raise NotImplementedError("unkowned ModelMeanType")
         if clip_denoised:
@@ -196,14 +230,14 @@ class GaussianDiffusion:
             "pred_xstart": pred_xstart,
         }
 
-    def _predict_xstart_from_eps(self, x_t, t, eps):
+    def predict_xstart_from_eps(self, x_t, t, eps):
         assert x_t.shape == eps.shape
         return (
                 _extract_into_tensor(self.sqrt_recip_alphas_cumprod, t, x_t.shape) * x_t
                 - _extract_into_tensor(self.sqrt_recipm1_alphas_cumprod, t, x_t.shape) * eps
         )
 
-    def _predict_eps_from_xstart(self, x_t, t, pred_xstart):
+    def predict_eps_from_xstart(self, x_t, t, pred_xstart):
         return (
                 _extract_into_tensor(self.sqrt_recip_alphas_cumprod, t, x_t.shape) * x_t
                 - pred_xstart
@@ -258,7 +292,6 @@ class GaussianDiffusion:
         :return: a non-differentiable batch of samples.
         """
         final = None
-        sample_list = []
         for sample in self.p_sample_loop_progressive(
                 model,
                 shape,
@@ -268,8 +301,7 @@ class GaussianDiffusion:
                 progress=progress,
         ):
             final = sample
-            sample_list.append(final["sample"])
-        return final["sample"], sample_list
+        return final["sample"]
 
     def p_sample_loop_progressive(
             self,
@@ -295,13 +327,13 @@ class GaussianDiffusion:
             img = noise
         else:
             img = th.randn(*shape, device=device)
-        indices = list(range(self.time_steps))[::-1]
+        indices = list(range(self.num_timesteps))[::-1]
 
         if progress:
             # Lazy import so that we don't depend on tqdm.
             from tqdm.auto import tqdm
 
-            indices = tqdm(indices)
+            indices = tqdm(indices, desc="sampling", total=self.num_timesteps)
 
         for i in indices:
             t = th.tensor([i] * shape[0], device=device)
@@ -320,7 +352,6 @@ class GaussianDiffusion:
             model,
             x_t,
             t,
-            t_next,
             clip_denoised=True,
             eta=0.0,
     ):
@@ -335,19 +366,19 @@ class GaussianDiffusion:
             t,
             clip_denoised=clip_denoised,
         )
-        eps = self._predict_eps_from_xstart(x_t, t, out["pred_xstart"])  # get eps through predict_xstart
+        eps = self.predict_eps_from_xstart(x_t, t, out["pred_xstart"])  # get eps through predict_xstart
         alpha_bar = _extract_into_tensor(self.alphas_cumprod, t, x_t.shape)
-        alpha_bar_next = _extract_into_tensor(self.alphas_cumprod, t_next, x_t.shape)
+        alpha_bar_prev = _extract_into_tensor(self.alphas_cumprod_prev, t, x_t.shape)
         sigma = (
                 eta
-                * th.sqrt((1 - alpha_bar_next) / (1 - alpha_bar))
-                * th.sqrt(1 - alpha_bar / alpha_bar_next)
+                * th.sqrt((1 - alpha_bar_prev) / (1 - alpha_bar))
+                * th.sqrt(1 - alpha_bar / alpha_bar_prev)
         )  # variance
         # Equation 12.
         noise = th.randn_like(x_t)
         mean_pred = (
-                out["pred_xstart"] * th.sqrt(alpha_bar_next)
-                + th.sqrt(1 - alpha_bar_next - sigma ** 2) * eps
+                out["pred_xstart"] * th.sqrt(alpha_bar_prev)
+                + th.sqrt(1 - alpha_bar_prev - sigma ** 2) * eps
         )  # predicted mean
         nonzero_mask = (
             (t != 0).float().view(-1, *([1] * (len(x_t.shape) - 1)))
@@ -366,11 +397,9 @@ class GaussianDiffusion:
             eta=0.0,
     ):
         """
-        Generate samples from the model using MemoryDiffusion.
         Same usage as p_sample_loop().
         """
         final = None
-        sample_list = []
         for sample in self.ddim_sample_loop_progressive(
                 model,
                 shape,
@@ -381,8 +410,7 @@ class GaussianDiffusion:
                 eta=eta,
         ):
             final = sample
-            sample_list.append(final["sample"])
-        return final["sample"], sample_list
+        return final["sample"]
 
     def ddim_sample_loop_progressive(
             self,
@@ -408,22 +436,20 @@ class GaussianDiffusion:
         else:
             img = th.randn(*shape, device=device)
 
-        indices = list(th.linspace(0, self.time_steps - 1, self.ddim_step + 1).long())[::-1]
-        t_pairs = zip(indices[:-1], indices[1:])
+        indices = list(range(self.num_timesteps))[::-1]
+
         if progress:
             # Lazy import so that we don't depend on tqdm.
-            from tqdm.auto import tqdm
-            t_pairs = tqdm(t_pairs, total=self.ddim_step)
+            from tqdm import tqdm
+            indices = tqdm(indices, desc="sampling", total=self.num_timesteps)
 
-        for i, j in t_pairs:
+        for i in indices:
             t = th.tensor([i] * shape[0], device=device)
-            t_next = th.tensor([j] * shape[0], device=device)
             with th.no_grad():
                 out = self.ddim_sample(
                     model,
                     img,
                     t,
-                    t_next,
                     clip_denoised=clip_denoised,
                     eta=eta,
                 )
@@ -455,10 +481,29 @@ class GaussianDiffusion:
         return loss
 
     def get_rand_t(self, batch_size, device):
-        t1 = th.randint(0, self.time_steps // 2, (batch_size // 2,)).long()
-        t2 = self.time_steps - 1 - t1
-        t3 = th.cat([t1, t2], dim=-1)
-        return t3.to(device)
+        t = th.randint(0, self.num_timesteps, (batch_size // 2 + 1,))
+        t = th.cat([t, self.num_timesteps - t - 1], dim=0)[:batch_size]
+        return t.to(device)
+
+    def get_ddim_rand_t(self, batch_size, device, num_ddim_timesteps):
+        ddim_time_steps = th.LongTensor(space_timesteps(self.num_timesteps, num_ddim_timesteps))
+        t = th.randint(0, num_ddim_timesteps, (batch_size // 2 + 1,))
+        t = th.cat([t, num_ddim_timesteps - t - 1], dim=0)[:batch_size]
+        t = ddim_time_steps[t]
+        return t.to(device)
+
+    def restore_img(
+            self,
+            model,
+            x_start,
+            t: int = 20
+    ):
+        assert 0 <= t < self.num_timesteps
+        t = th.LongTensor([t] * x_start.shape[0]).to(x_start.device)
+        x_t = self.q_sample(x_start=x_start, t=t)
+        pred_noise = model(x_t, t)
+        x_recon = self.predict_xstart_from_eps(x_t=x_t, t=t, eps=pred_noise)
+        return x_t, x_recon
 
 
 def _extract_into_tensor(arr, t, broadcast_shape):
@@ -477,7 +522,7 @@ def _extract_into_tensor(arr, t, broadcast_shape):
     return res.expand(broadcast_shape)
 
 
-# ============================Unet Model================================
+# =====================================Unet Model=========================================
 class TimestepBlock(nn.Module):
     """
     Any module where forward() takes timestep embeddings as a second argument.
@@ -764,7 +809,7 @@ class UNetModel(nn.Module):
             out_channels=1,
             num_res_blocks=2,
             attention_resolutions=None,
-            dropout=0,
+            dropout=0.,
             channel_mult=(1, 2, 2),
             conv_resample=True,
             dims=2,
@@ -972,17 +1017,17 @@ class UNetModel(nn.Module):
 def test_unet():
     device = "cuda"
     unet = UNetModel(
-        in_channels=1,
-        model_channels=32,
-        out_channels=1,
-        channel_mult=(1, 2, 2),
-        attention_resolutions=[],
-        num_res_blocks=2
+        in_channels=3,
+        model_channels=128,
+        out_channels=3,
+        channel_mult=(1, 2, 3, 4),
+        num_res_blocks=2,
     ).to(device)
-    x = th.randn((16, 1, 128, 128), device=device)
-    t = th.randint(0, 100, (16,), device=device)
+    x = th.randn((8, 3, 128, 128), device=device)
+    t = th.randint(0, 100, (8,), device=device)
     out = unet(x, t)
     print(out.shape)
 
-# if __name__ == '__main__':
-#     test_unet()
+
+if __name__ == '__main__':
+    test_unet()

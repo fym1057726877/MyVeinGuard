@@ -3,16 +3,14 @@ import torch
 import torch.nn as nn
 from torch import optim
 from tqdm import tqdm
-from gaussiandiffusion import UNetModel
-from respace import SpacedDiffusion
-from encoderandmemory import EncoderAndMemory
+from WaveletMemory.waveletmemory import WaveletsMemory
 from utils import get_project_path
 from data.mydataset import trainloader, testloader
 from utils import draw_ori_and_recon_images16
 
 
 class EntropyLoss(nn.Module):
-    def __init__(self, entropy_loss_coef=0.002):
+    def __init__(self, entropy_loss_coef=0.0002):
         super(EntropyLoss, self).__init__()
         self.entropy_loss_coef = entropy_loss_coef
 
@@ -23,56 +21,48 @@ class EntropyLoss(nn.Module):
         return entropy_loss
 
 
-class Trainer:
+class TrainMemory:
     def __init__(
             self,
             lr=5e-4,
             device="cuda",
+            batchsize=30
     ):
-        super(Trainer, self).__init__()
-        self.model_name = "encoder_memory"
+        super(TrainMemory, self).__init__()
+        self.model_name = "waveletsmemory"
         self.device = device
         self.train_loader, self.test_loader = trainloader, testloader
-        self.diffsuion = SpacedDiffusion(num_ddim_timesteps=100)
-        self.unet = UNetModel(
-            in_channels=1,
-            model_channels=64,
-            out_channels=1,
-            channel_mult=(1, 2, 3, 4),
-            num_res_blocks=2,
-        ).to(device)
-        self.unet_path = os.path.join(get_project_path(), "pretrained", "ddim_eps_64.pth")
-        self.unet.load_state_dict(torch.load(self.unet_path))
-
-        self.encoder_memory = EncoderAndMemory(
-            feature_dims=4096,
-            MEM_DIM=600,
+        self.memory = WaveletsMemory(
+            feature_dims=2048,
+            MEM_DIM=1000,
+            image_size=64,
         ).to(self.device)
         self.save_path = os.path.join(get_project_path(), "pretrained", f"{self.model_name}.pth")
-        self.encoder_memory.load_state_dict((torch.load(self.save_path)))
+        self.memory.load_state_dict(torch.load(self.save_path))
 
         # loss function
         self.loss_fun1 = nn.MSELoss()
         self.loss_fun2 = EntropyLoss()
         self.lr = lr
+        self.batch_size = batchsize
 
-        self.optimer = optim.AdamW(self.encoder_memory.parameters(), lr=self.lr, weight_decay=0.005)
+        self.optimer = optim.AdamW(self.memory.parameters(), lr=self.lr, weight_decay=0.005)
         self.scheduler = optim.lr_scheduler.StepLR(self.optimer, step_size=10, gamma=0.99)
 
     def train(self, epochs):
         for e in range(epochs):
             train_num = 0
             epoch_loss = 0
-            self.unet.eval()
-            self.encoder_memory.train()
+            self.memory.train()
+            # start train
             batch_count = len(self.train_loader)
             for index, (img, label) in tqdm(enumerate(self.train_loader), desc=f"train {e+1}/{epochs}",
                                             total=batch_count):
                 self.optimer.zero_grad()
                 img, label = img.to(self.device), label.to(self.device)
-                out = self.encoder_memory(img)
-                z_hat, mem_weight = out["z_hat"], out["mem_weight"]
-                noise_imgs, x_recon = self.diffsuion.restore_img(self.unet, z_hat, t=20)
+                out = self.memory(img)
+                x_recon = out["x_recon"]
+                mem_weight = out["mem_weight"]
                 loss = self.loss_fun1(x_recon, img) + self.loss_fun2(mem_weight)
 
                 loss.backward()
@@ -86,22 +76,25 @@ class Trainer:
 
             epoch_loss /= batch_count
             print(f"[Epoch {e+1}/{epochs}   Loss:{epoch_loss:.6f}]")
-            torch.save(self.encoder_memory.state_dict(), self.save_path)
+            torch.save(self.memory.state_dict(), self.save_path)
 
     def eval(self):
-        self.encoder_memory.eval()
-        self.unet.eval()
+        self.memory.eval()
         imgs, labels = next(iter(self.test_loader))
         imgs, labels = imgs.to(self.device), labels.to(self.device)
-        z_hat = self.encoder_memory(imgs)["z_hat"]
-        recon_imgs = self.diffsuion.restore_img(self.unet, z_hat, t=20)[1]
+        recon_imgs = self.memory(imgs)["x_recon"]
+        # torch.save(recon_imgs, os.path.join(get_project_path(), "recon_imgs", f"{i}.pth"))
         draw_ori_and_recon_images16(imgs, recon_imgs)
 
 
 def main(device="cuda"):
-    train_model = Trainer(lr=5e-4, device=device)
-    train_model.train(100)
-    # train_model.eval()
+    train_model = TrainMemory(
+        lr=5e-4,
+        device=device,
+        batchsize=30
+    )
+    # train_model.train(100)
+    train_model.eval()
 
 
 if __name__ == "__main__":

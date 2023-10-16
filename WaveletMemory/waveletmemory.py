@@ -3,16 +3,25 @@ import torch as th
 from torch import nn
 from torch.nn import functional as F
 from DirectActor.ActorModel import Resnet34Encoder
+from pywt import dwt2, idwt2
 
 
-class EncoderAndMemory(nn.Module):
-    def __init__(self, feature_dims=4096, MEM_DIM=600):
-        super(EncoderAndMemory, self).__init__()
+class WaveletsMemory(nn.Module):
+    def __init__(self, feature_dims=2048, MEM_DIM=200, image_size=64):
+        super(WaveletsMemory, self).__init__()
 
         self.MEM_DIM = MEM_DIM
         self.feature_dims = feature_dims
+        assert isinstance(image_size, (int, list, tuple)), "image_size must be int, list or tuple"
+        if isinstance(image_size, int):
+            self.img_width = self.img_height = image_size
+        if isinstance(image_size, (list, tuple)):
+            self.img_width = image_size[0]
+            self.img_height = image_size[1]
 
-        self.encoder = Resnet34Encoder(self.feature_dims)
+        # self.encoder = Resnet34Encoder(self.feature_dims)
+        self.encoder = ConvEncoder(image_channels=1, conv_channels=32)
+        self.decoder = ConvDecoder(image_channels=1, conv_channels=32)
 
         self.memory = th.zeros((self.MEM_DIM, self.feature_dims))
         nn.init.kaiming_uniform_(self.memory)
@@ -29,7 +38,6 @@ class EncoderAndMemory(nn.Module):
     def forward(self, x):
         B, C, H, W = x.shape
         z = self.encoder(x)  # (B, C, H, W) -> (B, fea)
-        assert self.feature_dims == z.shape[1] == C*H*W
         ex_z = z.unsqueeze(1).repeat(1, self.MEM_DIM, 1)  # [b, mem_dim, fea]
         ex_mem = self.memory.unsqueeze(0).repeat(B, 1, 1)  # [b, mem_dim, fea]
 
@@ -43,9 +51,9 @@ class EncoderAndMemory(nn.Module):
         mem_weight = F.normalize(mem_weight, p=1, dim=1)
         z_hat = th.matmul(mem_weight, self.memory)
 
-        z_hat = z_hat.view(B, C, H, W)
+        x_recon = self.decoder(z_hat)
 
-        return dict(z_hat=z_hat, mem_weight=mem_weight)
+        return dict(x_recon=x_recon, z_hat=z_hat, mem_weight=mem_weight)
 
 
 class MultiHeadedAttention(nn.Module):
@@ -214,6 +222,13 @@ class ConvDecoder(nn.Module):
         return x
 
 
+def testencoder():
+    e = ConvEncoder(image_channels=1, conv_channels=32)
+    x = th.randn((16, 1, 64, 64))
+    o = e(x)
+    print(o.shape)
+
+
 def testdecoder():
     d = ConvDecoder(image_channels=1, conv_channels=32)
     x = th.randn((16, 2048))
@@ -222,15 +237,11 @@ def testdecoder():
 
 
 def testmemory():
-    model = EncoderAndMemory()
+    model = WaveletsMemory()
     x = th.randn((16, 1, 64, 64))
-    out = model(x)
-    z_hat = out["z_hat"]
-    mem_weight = out["mem_weight"]
-    print(z_hat.shape)
-    print(mem_weight.shape)
+    out = model(x)["z_hat"]
+    print(out.shape)
 
 
 if __name__ == '__main__':
-    # testdecoder()
-    testmemory()
+    testencoder()

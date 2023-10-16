@@ -4,11 +4,9 @@ import torch.nn as nn
 from torch import optim
 from tqdm import tqdm
 from utils import get_project_path
-from data.mydataset import get_Vein600_128x128_Dataloader
+from data.mydataset import trainloader, testloader
 from Classifier.model import (FVRASNet_wo_Maxpooling, FineTuneClassifier, LightweightDeepConvNN,
                               MSMDGANetCnn_wo_MaxPool, TargetedModelB, Tifs2019CnnWithoutMaxPool)
-
-os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 
 
 def getDefinedClsModel(dataset_name, model_name, device) -> nn.Module:
@@ -84,10 +82,10 @@ class TrainClassifier:
         super(TrainClassifier, self).__init__()
         # customize these object according to the path of your own data
         self.device = device
-        self.train_loader, self.test_loader = get_Vein600_128x128_Dataloader(batch_size=batchsize, shuffle=True)
+        self.train_loader, self.test_loader = trainloader, testloader
         self.classifier = getDefinedClsModel(dataset_name, model_name, device)
         self.save_path = os.path.join(get_project_path(), "pretrained", f"{model_name}.pth")
-        # self.classifier.load_state_dict(torch.load(self.save_path))
+        self.classifier.load_state_dict(torch.load(self.save_path))
 
         # loss function
         self.loss_fun = nn.CrossEntropyLoss()
@@ -151,8 +149,9 @@ def trainCls(dataset_name, model_name, device, epochs):
         device=device,
         total_epochs=epochs
     )
-    train_Classifier.train()
+    # train_Classifier.train()
+    print(train_Classifier.eval())
 
 
 if __name__ == "__main__":
-    trainCls(dataset_name="Handvein3", model_name="ModelB", device="cuda", epochs=10)
+    trainCls(dataset_name="Handvein3", model_name="ModelB", device="cuda", epochs=20)

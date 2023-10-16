@@ -1,80 +1,126 @@
+import os
 import torch
+from tqdm import tqdm
+from torch.utils.data import DataLoader, TensorDataset
 from Classifier.trainClassifier import getDefinedClsModel
-from DirectActor.ActorModel import Resnet34Actor
-
+from MemoryDiffusion.encoderandmemory import EncoderAndMemory
+from MemoryDiffusion.respace import SpacedDiffusion
+from MemoryDiffusion.gaussiandiffusion import UNetModel
+from utils import get_project_path
+from Classifier.attackClassifier import generateAdvImage
+from data.mydataset import testloader
 
 # dataset_name = "Handvein"
 # dataset_name = "Handvein3"
 dataset_name = "Fingervein2"
 
-actor_type = "ResnetActor"
 
-is_local = True
-# is_local = False
-is_peg = True
-# is_peg = False
-
-device = "cuda"
-batch_size = 24
-
-def getAdvDataLoader(attack_type, eps, model_name, genAdvExampleModel_name):
-    # customize this function according to your data path of adv data
-    pass
+def getAdvDataLoader(
+        classifier=None,
+        attack_dataloder=None,
+        attack_type="fgsm",
+        eps=0.03,
+        progress=False,
+        adv_path=None,
+        batch_size=20,
+        shuffle=False
+):
+    if adv_path is not None:
+        data_dict = torch.load(adv_path)
+    else:
+        assert classifier is not None and attack_dataloder is not None
+        data_dict = generateAdvImage(
+            classifier=classifier,
+            attack_dataloder=attack_dataloder,
+            attack_type=attack_type,
+            progress=progress,
+            eps=eps,
+        )
+    normal_data = data_dict["normal"]
+    adv_data = data_dict["adv"]
+    label = data_dict["label"]
+    dataloder = DataLoader(TensorDataset(normal_data, adv_data, label), batch_size=batch_size, shuffle=shuffle)
+    return dataloder
 
 
 class DirectTrainActorReconstruct:
     def __init__(self):
         super(DirectTrainActorReconstruct, self).__init__()
-        self.actor = Resnet34Actor().to(device)
-        self.actor.load_state_dict(torch.load("path of actor model"))
-        self.actor.to(device)
+        self.device = "cuda"
+        self.batch_size = 20
+        self.testloader = testloader
 
-        self.generator = SwinTransGenerator(is_local=is_local, is_peg=is_peg)
-        self.generator.load_state_dict(torch.load("path of g model"))
-        self.generator.to(device)
+        self.model_name = "encoder_memory"
+        self.actor = EncoderAndMemory(feature_dims=4096, MEM_DIM=600)
+        self.actor.load_state_dict(torch.load(os.path.join(get_project_path(), "pretrained", f"{self.model_name}.pth")))
+        self.actor.to(self.device)
 
+        self.generator = SpacedDiffusion(num_ddim_timesteps=100)
+        self.unet = UNetModel(
+            in_channels=1,
+            model_channels=64,
+            out_channels=1,
+            channel_mult=(1, 2, 3, 4),
+            num_res_blocks=2,
+        ).to(self.device)
+        self.unet_path = os.path.join(get_project_path(), "pretrained", "ddim_eps_64.pth")
+        self.unet.load_state_dict(torch.load(self.unet_path))
+
+        self.adv_path = os.path.join(get_project_path(), "data", "adv_imgs", "600_classes.pth")
 
     @torch.no_grad()
     def defense(self, img):
         z_tmp = self.actor(img)
-        rec_img = self.generator(z_tmp)
+        rec_img = self.generator.ddim_sample_loop(model=self.unet, shape=z_tmp.shape, noise=z_tmp, progress=True)
         return rec_img
 
     @torch.no_grad()
-    def test(self, attack_type, eps, model_name, genAdvExampleModel_name):
+    def test(self, attack_type, eps, model_name, progress=False):
         classifier = getDefinedClsModel(
             dataset_name=dataset_name,
             model_name=model_name,
-            device=device
+            device=self.device
         )
         classifier.load_state_dict(torch.load("path of classifier"))
-        advDataloader = getAdvDataLoader(attack_type, eps, model_name, genAdvExampleModel_name)
-        total_num = len(advDataloader)
+        advDataloader = getAdvDataLoader(
+            classifier=classifier,
+            attack_dataloder=self.testloader,
+            attack_type=attack_type,
+            eps=eps,
+            adv_path=self.adv_path,
+            batch_size=20,
+            shuffle=True
+        )
 
         def accuracy(y, y1):
-            return y.max(dim=1, keep_dim=True)[1].eq(y1.view_as(y)).sum()
+            return (y.max(dim=1)[1] == y1).sum()
 
         normal_acc, adv_acc, rec_acc, num = 0, 0, 0, 0
+        total_num = len(advDataloader)
+
         iterObject = enumerate(advDataloader)
+        if progress:
+            iterObject = tqdm(iterObject, total=total_num)
+
         for i, (img, adv_img, label) in iterObject:
-            img, adv_img = img.to(self.device), adv_img.to(self.device)
-            label = label.to(self.device)
+            img, adv_img, label = img.to(self.device), adv_img.to(self.device), label.to(self.device)
             y = classifier(img)
             normal_acc += accuracy(y, label)
 
             adv_y = classifier(adv_img)
             adv_acc += accuracy(adv_y, label)
-            rec_img = self.defense(adv_img)
 
+            rec_img = self.defense(adv_img)
             rec_y = classifier(rec_img)
             rec_acc += accuracy(rec_y, label)
             num += label.size(0)
 
-        print("[Num: %d/%d] [NormalAcc:   %f] [AdvAcc:   %f] [RecAcc:   %f]" % (
-            num, total_num,
-            torch.true_divide(normal_acc, num).item(),
-            torch.true_divide(adv_acc, num).item(),
-            torch.true_divide(rec_acc, num).item()))
+        print(f"-------------------------------------------------"
+              f"test result:\n"
+              f"NorAcc:{torch.true_divide(normal_acc, num).item():.6f}\n"
+              f"AdvAcc:{torch.true_divide(adv_acc, num).item():.6f}\n"
+              f"RecAcc:{torch.true_divide(rec_acc, num).item():.6f}\n"
+              f"-------------------------------------------------")
 
 
 def testDirectActor():
@@ -93,14 +139,13 @@ def testDirectActor():
         # eps = 0.02
         eps = 0.01
 
-    model_name = "Resnet18"
+    # model_name = "Resnet18"
     # model_name = "GoogleNet"
-    # model_name = "ModelB"
+    model_name = "ModelB"
     # model_name = "MSMDGANetCnn_wo_MaxPool"
     # model_name = "Tifs2019Cnn_wo_MaxPool"
     # model_name = "FVRASNet_wo_Maxpooling"
     # model_name = "LightweightDeepConvNN"
-
 
     directActorRec = DirectTrainActorReconstruct()
 
@@ -108,7 +153,7 @@ def testDirectActor():
         attack_type=attack_type,
         eps=eps,
         model_name=model_name,
-        genAdvExampleModel_name=model_name
+        progress=True,
     )
 
 

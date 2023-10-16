@@ -46,7 +46,6 @@ class Tifs2019CnnWithoutMaxPool(nn.Module):
 
         self.softmax = nn.Softmax(-1)
 
-
     def forward(self, x):
         x = self.conv1(x)
         x = self.bn1(x)
@@ -84,8 +83,7 @@ class TargetedModelB(nn.Module):
 
         self.dropout = nn.Dropout(0.2)
 
-
-        self.fc_out = nn.Linear(in_features=256 * 8 * 8, out_features=out_channel)
+        self.fc_out = nn.Linear(in_features=256 * 4 * 4, out_features=out_channel)
         self.softmax = nn.Softmax(-1)
 
     def forward(self, x):

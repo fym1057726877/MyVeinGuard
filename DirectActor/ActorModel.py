@@ -1,41 +1,34 @@
 import torch.nn as nn
 import torchvision
-import torch
-from data.mydataset import Vein600_128x128
-from torchvision.transforms import transforms
-from torch.utils.data import DataLoader
+import torch as th
 
 
-class Resnet34Actor(nn.Module):
-    def __init__(self, latent_dim=256):
-        super(Resnet34Actor, self).__init__()
-        self.action_bound = 10
+class Resnet34Encoder(nn.Module):
+    def __init__(self, feature_dims=2048):
+        super(Resnet34Encoder, self).__init__()
         self.conv_in = nn.Conv2d(in_channels=1, out_channels=3, kernel_size=1)
         self.resnet = torchvision.models.resnet34()
-        self.linear_out = nn.Linear(1000, latent_dim)
-
+        self.resnet = nn.Sequential(
+            *list(self.resnet.children())[:-3]
+        )
 
     def forward(self, img):
+        B = img.shape[0]
         z = self.conv_in(img)
         z = self.resnet(z)
-        z = self.linear_out(z)
-        z = torch.tanh(z)
-        z = z * self.action_bound
+        z = z.view(B, -1)
         return z
 
 
 def test_actormodel():
-    transform = transforms.ToTensor()
-    dataset = Vein600_128x128(transform=transform)
-    dataloder = DataLoader(dataset, batch_size=100, shuffle=True)
-    print(len(dataloder))
-    x, y = next(iter(dataloder))
-
-    print(x.shape, y.shape)
-
-    model = Resnet34Actor()
+    x = th.randn((16, 1, 64, 64))
+    model = Resnet34Encoder()
     out = model(x)
     print(out.shape)
 
-if __name__ == '__main__':
-    test_actormodel()
+# test_actormodel()
+
+
+
+
+
