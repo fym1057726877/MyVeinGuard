@@ -15,48 +15,17 @@ def get_project_path(project_name='MyVeinGuard'):
     return cur_path[:cur_path.find(project_name)] + project_name
 
 
-def draw_ori_and_recon_images16(images, recon_images):
-    assert images.shape[0] >= 16
-    images = images.cpu().squeeze(1).detach().numpy()
-    recon_images = recon_images.cpu().squeeze(1).detach().numpy()
+def draw_img_groups(img_groups: list, imgs_every_row: int = 8):
+    num_groups = len(img_groups)
+    for i in range(num_groups):
+        assert img_groups[i].shape[0] >= imgs_every_row
+        img_groups[i] = img_groups[i].cpu().squeeze(1).detach().numpy()
     fig = plt.figure()
-    gs = fig.add_gridspec(4, 8)
-    for i in range(4):
-        for j in range(8):
+    gs = fig.add_gridspec(num_groups, imgs_every_row)
+    for i in range(num_groups):
+        for j in range(imgs_every_row):
             ax = fig.add_subplot(gs[i, j])
-            if i < 2:
-                idx = i * 4 + j
-                ax.imshow(images[idx], cmap="gray")
-            else:
-                idx = (i - 2) * 4 + j
-                ax.imshow(recon_images[idx], cmap="gray")
+            ax.imshow(img_groups[i][j], cmap="gray")
             ax.axis("off")
     plt.tight_layout()
     plt.show()
-
-
-def draw_ori_noise_recon_images16(images, noise_imgs, recon_images):
-    assert images.shape[0] == noise_imgs.shape[0] == recon_images.shape[0]
-    assert images.shape[0] >= 16
-    images = images.cpu().squeeze(1).detach().numpy()
-    noise_imgs = noise_imgs.cpu().squeeze(1).detach().numpy()
-    recon_images = recon_images.cpu().squeeze(1).detach().numpy()
-    fig = plt.figure()
-    gs = fig.add_gridspec(6, 8)
-    for i in range(6):
-        for j in range(8):
-            ax = fig.add_subplot(gs[i, j])
-            if i < 2:
-                idx = i * 8 + j
-                ax.imshow(images[idx], cmap="gray")
-            elif 2 <= i < 4:
-                idx = (i - 2) * 8 + j
-                ax.imshow(noise_imgs[idx], cmap="gray")
-            else:
-                idx = (i - 4) * 8 + j
-                ax.imshow(recon_images[idx], cmap="gray")
-            ax.axis("off")
-    plt.tight_layout()
-    plt.show()
-
-

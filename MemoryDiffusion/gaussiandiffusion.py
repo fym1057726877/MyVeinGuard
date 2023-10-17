@@ -5,7 +5,7 @@ import torch as th
 import torch.nn as nn
 import torch.nn.functional as F
 from abc import abstractmethod
-from nn import (
+from .nn import (
     conv_nd,
     linear,
     avg_pool_nd,
@@ -504,6 +504,19 @@ class GaussianDiffusion:
         pred_noise = model(x_t, t)
         x_recon = self.predict_xstart_from_eps(x_t=x_t, t=t, eps=pred_noise)
         return x_t, x_recon
+
+    def restore_img_0(
+            self,
+            model,
+            x_start,
+            t: int = 50
+    ):
+        assert 0 <= t < self.num_timesteps
+        t = th.LongTensor([t] * x_start.shape[0]).to(x_start.device)
+        x_t = self.q_sample(x_start=x_start, t=t)
+        restore_x = model(x_t, t)
+        return x_t, restore_x
+
 
 
 def _extract_into_tensor(arr, t, broadcast_shape):

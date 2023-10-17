@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 from PIL import Image
 from torchvision import transforms
 from torch.utils.data import Dataset, DataLoader, Subset
-from utils import get_project_path, draw_ori_and_recon_images16
+from utils import get_project_path
 
 transform_train = transforms.Compose([
     transforms.Resize((64, 64)),
@@ -20,6 +20,8 @@ transform_test = transforms.Compose([
     # transforms.Normalize(mean=[0.485], std=[0.229, 0.224, 0.225]),
     transforms.Normalize(mean=[0.485], std=[0.229])
 ])
+
+normalize = transforms.Normalize(mean=[0.485], std=[0.229])
 
 
 class Vein600_128x128(Dataset):

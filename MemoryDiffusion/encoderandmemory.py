@@ -25,6 +25,7 @@ class EncoderAndMemory(nn.Module):
         self.epsilon = 1e-12
 
         self.relu = nn.ReLU(inplace=True)
+        # self.dropout = nn.Dropout(p=0.1)
 
     def forward(self, x):
         B, C, H, W = x.shape
@@ -36,6 +37,7 @@ class EncoderAndMemory(nn.Module):
         mem_logit = self.Cosine_Similiarity(ex_z, ex_mem)  # [b, mem_dim]
         # mem_weight = self.attn(mem_logit)  # [b, num_mem]
         mem_weight = F.softmax(mem_logit, dim=-1)
+        # mem_weight = self.dropout(mem_weight)
 
         # 稀疏寻址
         mem_weight = ((self.relu(mem_weight - self.threshold) * mem_weight)
@@ -56,7 +58,7 @@ class MultiHeadedAttention(nn.Module):
         self.in_dim = in_dim
         self.embed_dim = embed_dim
         self.num_heads = num_heads
-
+        self.Cosine_Similiarity = nn.CosineSimilarity(dim=2)
         # q,k,v个需要一个，最后拼接还需要一个，总共四个线性层
         self.linear_q = nn.Linear(in_dim, self.embed_dim)
         self.linear_k = nn.Linear(in_dim, self.embed_dim)
@@ -67,17 +69,18 @@ class MultiHeadedAttention(nn.Module):
         self.final_linear = nn.Linear(self.embed_dim, self.embed_dim)
         self.dropout = nn.Dropout(p=dropout)
 
-    def forward(self, x):
-        B, L = x.shape
+    def forward(self, q, k, v):
+        B, M, L = q.shape
         assert L == self.in_dim
         # 进入多头处理环节
         # 得到每个头的输入
         dk = self.embed_dim // self.num_heads
-        q = self.linear_q(x).view(B, self.num_heads, dk)  # B,H,dk
-        k = self.linear_k(x).view(B, self.num_heads, dk)
-        v = self.linear_v(x).view(B, self.num_heads, dk)
+        q = self.linear_q(q).view(B, self.num_heads, dk)  # B,H,dk
+        k = self.linear_k(k).view(B, self.num_heads, dk)
+        v = self.linear_v(v).view(B, self.num_heads, dk)
 
-        dist = th.matmul(q, k.transpose(1, 2)) * self.scale  # B,H
+        dist = self.Cosine_Similiarity(q, k)
+        # dist = th.matmul(q, k.transpose(1, 2)) * self.scale  # B,H
         dist = th.softmax(dist, dim=-1)
         dist = self.dropout(dist)
 
@@ -231,6 +234,16 @@ def testmemory():
     print(mem_weight.shape)
 
 
+def testattn():
+    q = th.randn((16, 600, 4096))
+    k = th.randn((16, 600, 4096))
+    v = th.randn((600, 4096))
+    attn = MultiHeadedAttention(num_heads=8, in_dim=4096)
+    out = attn(q, k, v)
+    print(out.shape)
+
+
 if __name__ == '__main__':
     # testdecoder()
-    testmemory()
+    # testmemory()
+    testattn()

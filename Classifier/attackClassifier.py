@@ -11,7 +11,7 @@ from data.mydataset import testloader
 from Classifier.trainClassifier import getDefinedClsModel
 
 
-def advAttack(classifier, x, attack_type, eps):
+def advAttack(classifier, x, attack_type, eps, device="cuda"):
     if attack_type == "RandFGSM":
         alpha = 0.005
         x = torch.clip(x + alpha * torch.sign(torch.randn(x.shape).to(device)), 0, 1)
@@ -30,11 +30,23 @@ def advAttack(classifier, x, attack_type, eps):
     return x_adv
 
 
-def generateAdvImage(classifier, attack_dataloder, savepath=None, attack_type="fgsm", eps=0.03, progress=False):
+def generateAdvImage(
+        classifier,
+        attack_dataloder,
+        savepath=None,
+        attack_type="FGSM",
+        eps=0.03,
+        device="cuda",
+        progress=False
+):
     print(f"-------------------------------------------------\n"
           f"Generating Adversarial Examples ...\n"
           f"eps = {eps} attack = {attack_type}")
     time.sleep(1)
+
+    def accuracy(y, y1):
+        return (y.max(dim=1)[1] == y1).sum()
+
     dataloader = attack_dataloder
     train_acc, adv_acc, train_n = 0, 0, 0
     normal_data, adv_data, label_data = None, None, None
@@ -45,12 +57,12 @@ def generateAdvImage(classifier, attack_dataloder, savepath=None, attack_type="f
     for index, (x, label) in indice:
         x, label = x.to(device), label.to(device)
         pred = classifier(x)
-        train_acc += (pred.max(dim=1)[1] == label).sum()
+        train_acc += accuracy(pred, label)
 
         x_adv = advAttack(classifier=classifier, x=x, attack_type=attack_type, eps=eps)
-
         y_adv = classifier(x_adv)
-        adv_acc += (y_adv.max(dim=1)[1] == label).sum()
+        adv_acc += accuracy(y_adv, label)
+
         train_n += label.size(0)
 
         x, x_adv, label = x.data, x_adv.data, label.data
@@ -66,8 +78,7 @@ def generateAdvImage(classifier, attack_dataloder, savepath=None, attack_type="f
           f"-------------------------------------------------")
 
     adv_data = {"normal": normal_data, "adv": adv_data, "label": label_data}
-    if savepath is not None:
-        torch.save(adv_data, savepath)
+    torch.save(adv_data, savepath)
     return adv_data
 
 
@@ -112,9 +123,9 @@ if __name__ == "__main__":
     generateAdvImage(
         classifier=model,
         attack_dataloder=testloader,
-        # savepath=os.path.join(get_project_path(), "data", "adv_imgs", "600_classes.pth"),
         attack_type=attack_type,
         eps=eps,
-        progress=True
+        progress=True,
+        savepath=os.path.join(get_project_path(), "data", "adv_imgs", f"600_{model_name}_{attack_type}_{eps}.pth"),
     )
 
